@@ -15,190 +15,96 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # ==========================================
-      # CHECKOUT
-      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
-      # ==========================================
-      # SETUP .NET
-      # ==========================================
       - name: Setup .NET 10
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
-
-      # ==========================================
-      # EXTRACT ALL ZIP FILES
-      # ==========================================
-      - name: Extract project ZIP files
+      - name: Extract source ZIP
         shell: bash
         run: |
           set -e
 
+          rm -rf extracted
           mkdir -p extracted
 
-          echo "Searching for ZIP files..."
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name 'KurtDhylanMotoShopInventoryV3_Source.zip' -print -quit)
 
-          find . \
-            -type f \
-            -iname "*.zip" \
-            -not -path "./.git/*" \
-            -print
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: KurtDhylanMotoShopInventoryV3_Source.zip was not found."
+            echo "Upload the contents of the downloaded GitHub package to the repository root."
+            exit 1
+          fi
 
-          echo ""
-          echo "Extracting ZIP files..."
+          echo "Extracting $ZIP_FILE..."
+          unzip -q -o "$ZIP_FILE" -d extracted
 
-          ZIP_COUNT=0
+          echo "Extracted project files:"
+          find extracted -maxdepth 5 -type f | sort
 
-          while IFS= read -r ZIP_FILE; do
-
-            echo "----------------------------------------"
-            echo "Extracting:"
-            echo "$ZIP_FILE"
-
-            unzip -o -q "$ZIP_FILE" -d extracted
-
-            ZIP_COUNT=$((ZIP_COUNT + 1))
-
-          done < <(
-            find . \
-              -type f \
-              -iname "*.zip" \
-              -not -path "./.git/*" \
-              -print
-          )
-
-          echo ""
-          echo "ZIP files extracted: $ZIP_COUNT"
-
-          echo ""
-          echo "Searching extracted files..."
-
-          find extracted -maxdepth 8 -type f | sort | head -300
-
-
-      # ==========================================
-      # FIND CSProj
-      # ==========================================
       - name: Locate MAUI project
         shell: bash
         run: |
           set -e
 
-          echo "Searching for .csproj..."
-
-          PROJECT=$(find extracted . \
-            -type f \
-            -name "*.csproj" \
-            -not -path "./.git/*" \
-            -not -path "./extracted/extracted/*" \
-            -print -quit)
+          PROJECT=$(find extracted -type f -name '*.csproj' -print -quit)
 
           if [ -z "$PROJECT" ]; then
-            echo ""
-            echo "ERROR: No .csproj file was found."
-            echo ""
-            echo "Files found:"
-            find extracted -type f | sort | head -300
+            echo "ERROR: No .csproj file found after extraction."
+            echo "The source ZIP does not contain a MAUI project."
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PROJECT")
           PROJECT_NAME=$(basename "$PROJECT")
 
-          echo ""
-          echo "========================================"
-          echo "MAUI PROJECT FOUND"
-          echo "========================================"
-          echo "Project: $PROJECT"
-          echo "Directory: $PROJECT_DIR"
-          echo "Name: $PROJECT_NAME"
-          echo "========================================"
-
           echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "PROJECT_NAME=$PROJECT_NAME"
 
+          echo "Found project: $PROJECT"
 
-      # ==========================================
-      # INSTALL MAUI ANDROID
-      # ==========================================
       - name: Install MAUI Android workload
-        run: |
-          dotnet workload install maui-android --skip-manifest-update
+        run: dotnet workload install maui-android --skip-manifest-update
 
-
-      # ==========================================
-      # RESTORE
-      # ==========================================
-      - name: Restore project
+      - name: Restore
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          dotnet restore "${{ env.PROJECT_NAME }}"
+        run: dotnet restore "${{ env.PROJECT_NAME }}"
 
-
-      # ==========================================
-      # BUILD APK
-      # ==========================================
       - name: Publish Android APK
         working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          dotnet publish "${{ env.PROJECT_NAME }}" \
-            -f net10.0-android \
-            -c Release \
-            -p:AndroidPackageFormat=apk \
-            -p:AndroidKeyStore=false
+        run: >
+          dotnet publish "${{ env.PROJECT_NAME }}"
+          -f net10.0-android
+          -c Release
+          -p:AndroidPackageFormat=apk
+          -p:AndroidKeyStore=false
 
-
-      # ==========================================
-      # FIND APK
-      # ==========================================
-      - name: Find generated APK
+      - name: Collect APK
         shell: bash
         run: |
           set -e
 
-          echo "Searching for APK..."
+          mkdir -p artifacts
 
-          APK=$(find . \
-            -type f \
-            -name "*.apk" \
-            -not -path "./.git/*" \
-            -print -quit)
+          APK=$(find extracted -type f -name '*.apk' -print -quit)
 
           if [ -z "$APK" ]; then
-            echo ""
             echo "ERROR: APK was not generated."
-            echo ""
-            echo "Searching build output:"
-            find . -type f \
-              \( -name "*.apk" -o -name "*.aab" \) \
-              -print || true
-
+            find extracted -type f \( -name '*.apk' -o -name '*.aab' \) -print || true
             exit 1
           fi
 
-          echo ""
-          echo "APK FOUND:"
-          echo "$APK"
+          echo "APK found: $APK"
+          cp "$APK" "artifacts/KurtDhylanMotoShopInventoryV3.apk"
 
-          mkdir -p artifacts
-
-          cp "$APK" \
-            "artifacts/KurtDhylanMotoShopInventoryV3.apk"
-
-
-      # ==========================================
-      # UPLOAD APK
-      # ==========================================
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: KurtDhylanMotoShopInventoryV3-APK
           path: artifacts/KurtDhylanMotoShopInventoryV3.apk
           if-no-files-found: error
+          
