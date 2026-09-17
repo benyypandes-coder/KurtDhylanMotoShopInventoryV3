@@ -1,0 +1,92 @@
+name: Build Kurt Dhylan Moto Shop Inventory V3 APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Find and extract source ZIP
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p extracted
+
+          # Find the source ZIP anywhere in the repository.
+          ZIP_FILE=$(find . -type f -iname '*_Source.zip' -print -quit)
+
+          if [ -n "$ZIP_FILE" ]; then
+            echo "Found source ZIP: $ZIP_FILE"
+            unzip -q "$ZIP_FILE" -d extracted
+          else
+            echo "No source ZIP found."
+            echo "Checking whether the repository already contains a .csproj..."
+          fi
+
+          echo "Repository files:"
+          find . -maxdepth 4 -type f | sort | head -200
+
+          echo "Extracted files:"
+          find extracted -maxdepth 5 -type f | sort | head -200
+
+      - name: Locate MAUI project
+        shell: bash
+        run: |
+          set -e
+
+          # Prefer the extracted source, but also support an already-extracted repository.
+          PROJECT=$(find extracted . \
+            -type f \
+            -name '*.csproj' \
+            -not -path './.git/*' \
+            -not -path './extracted/extracted/*' \
+            -print -quit)
+
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: No .csproj file was found."
+            echo "Make sure KurtDhylanMotoShopInventoryV3_Source.zip is uploaded to the repository."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PROJECT")
+          PROJECT_NAME=$(basename "$PROJECT")
+
+          echo "PROJECT=$PROJECT" >> "$GITHUB_ENV"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "PROJECT_NAME=$PROJECT_NAME" >> "$GITHUB_ENV"
+
+          echo "Found project:"
+          echo "$PROJECT"
+
+      - name: Install MAUI Android workload
+        run: dotnet workload install maui-android --skip-manifest-update
+
+      - name: Restore
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: dotnet restore "${{ env.PROJECT_NAME }}"
+
+      - name: Publish Android APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: >
+          dotnet publish "${{ env.PROJECT_NAME }}"
+          -f net10.0-android
+          -c Release
+          -p:AndroidPackageFormat=apk
